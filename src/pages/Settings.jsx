@@ -1,10 +1,17 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Sidebar from "../components/Sidebar"
 import { Bell, User, Shield, HelpCircle } from "react-feather"
+import HeightModal from "../components/HeightModal"
+import { useAuth } from "../context/AuthContext"
 
 const Settings = () => {
+  const { user, updateUserData, getHealthData } = useAuth()
+  const [showHeightModal, setShowHeightModal] = useState(false)
+  const [error, setError] = useState(null)
+  const [success, setSuccess] = useState(null)
+  const [currentHeight, setCurrentHeight] = useState(null)
   const [settings, setSettings] = useState({
     notifications: {
       weightAlerts: true,
@@ -20,6 +27,21 @@ const Settings = () => {
       temperatureUnit: "celsius",
     },
   })
+
+  // Fetch current height when component mounts
+  useEffect(() => {
+    const fetchCurrentHeight = async () => {
+      if (user?.uid) {
+        try {
+          const healthData = await getHealthData(user.uid)
+          setCurrentHeight(healthData.height || 0)
+        } catch (error) {
+          console.error("Error fetching height:", error)
+        }
+      }
+    }
+    fetchCurrentHeight()
+  }, [user, getHealthData])
 
   // Handle toggle changes
   const handleToggle = (category, setting) => {
@@ -43,19 +65,86 @@ const Settings = () => {
     })
   }
 
+  // Handle height submission
+  const handleHeightSubmit = async (height) => {
+    try {
+      setError(null)
+      setSuccess(null)
+      
+      if (user?.uid) {
+        await updateUserData(user.uid, { height: Number.parseFloat(height) })
+        setCurrentHeight(Number.parseFloat(height))
+        setSuccess("Height updated successfully")
+        setShowHeightModal(false)
+      }
+    } catch (error) {
+      console.error("Error updating height:", error)
+      setError("Failed to update height")
+    }
+  }
+
   return (
     <div className="flex h-screen bg-gray-900 text-white">
       <Sidebar />
 
-      <main className="flex-1 p-6 overflow-y-auto">
+      <main className="flex-1 ml-24 md:ml-28 px-4 md:px-10 pt-8 pb-20 md:pb-8 relative z-10 overflow-y-auto mt-[5vh]">
         <div className="max-w-3xl mx-auto">
           <header className="mb-8">
             <h1 className="text-2xl font-bold">Settings</h1>
             <p className="text-gray-400">Manage your preferences</p>
           </header>
 
+          {/* Error and Success Messages */}
+          {error && (
+            <div className="mb-4 p-4 bg-red-500 bg-opacity-20 text-red-300 rounded-lg">
+              {error}
+            </div>
+          )}
+          {success && (
+            <div className="mb-4 p-4 bg-green-500 bg-opacity-20 text-green-300 rounded-lg">
+              {success}
+            </div>
+          )}
+
           {/* Settings Sections */}
           <div className="space-y-8">
+            {/* Account */}
+            <section className="bg-gray-800 rounded-xl p-6">
+              <div className="flex items-center mb-4">
+                <User className="text-purple-400 mr-3" size={20} />
+                <h2 className="text-xl font-medium">Account</h2>
+              </div>
+
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-medium">Current Height</h3>
+                    <p className="text-sm text-gray-400">
+                      {currentHeight ? `${currentHeight} cm` : "Not set"}
+                    </p>
+                  </div>
+                  <button 
+                    onClick={() => setShowHeightModal(true)}
+                    className="py-2 px-4 bg-gray-700 hover:bg-gray-600 rounded-md"
+                  >
+                    Change Height
+                  </button>
+                </div>
+
+                <button className="w-full py-2 px-4 bg-gray-700 hover:bg-gray-600 rounded-md text-left">
+                  Change Password
+                </button>
+
+                <button className="w-full py-2 px-4 bg-gray-700 hover:bg-gray-600 rounded-md text-left">
+                  Update Profile
+                </button>
+
+                <button className="w-full py-2 px-4 bg-red-900 hover:bg-red-800 rounded-md text-left text-red-200">
+                  Delete Account
+                </button>
+              </div>
+            </section>
+
             {/* Notifications */}
             <section className="bg-gray-800 rounded-xl p-6">
               <div className="flex items-center mb-4">
@@ -211,28 +300,6 @@ const Settings = () => {
               </div>
             </section>
 
-            {/* Account */}
-            <section className="bg-gray-800 rounded-xl p-6">
-              <div className="flex items-center mb-4">
-                <User className="text-purple-400 mr-3" size={20} />
-                <h2 className="text-xl font-medium">Account</h2>
-              </div>
-
-              <div className="space-y-4">
-                <button className="w-full py-2 px-4 bg-gray-700 hover:bg-gray-600 rounded-md text-left">
-                  Change Password
-                </button>
-
-                <button className="w-full py-2 px-4 bg-gray-700 hover:bg-gray-600 rounded-md text-left">
-                  Update Profile
-                </button>
-
-                <button className="w-full py-2 px-4 bg-red-900 hover:bg-red-800 rounded-md text-left text-red-200">
-                  Delete Account
-                </button>
-              </div>
-            </section>
-
             {/* Help & Support */}
             <section className="bg-gray-800 rounded-xl p-6">
               <div className="flex items-center mb-4">
@@ -255,6 +322,19 @@ const Settings = () => {
           </div>
         </div>
       </main>
+
+      {/* Height Modal */}
+      {showHeightModal && (
+        <HeightModal 
+          currentHeight={currentHeight}
+          onSubmit={handleHeightSubmit} 
+          onClose={() => {
+            setShowHeightModal(false)
+            setError(null)
+            setSuccess(null)
+          }} 
+        />
+      )}
     </div>
   )
 }

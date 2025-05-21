@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { Loader, Check, X, Wifi, Lock, RefreshCw, Send, Signal } from "lucide-react"
+import { useAuth } from "../context/AuthContext"
 
 // ESP32 AP Configuration
 const ESP32_AP_IP = "192.168.4.1"
@@ -13,6 +14,7 @@ const CONNECT_ENDPOINT = `http://${ESP32_AP_IP}/connect`
 const ESP32_PREFIXES = ["ESP32", "ESP-"]
 
 export default function ConnectionModal({ isOpen, onClose, onConnect }) {
+  const { user } = useAuth()
   const [step, setStep] = useState(1)
   const [ssid, setSsid] = useState("")
   const [password, setPassword] = useState("")
@@ -25,7 +27,31 @@ export default function ConnectionModal({ isOpen, onClose, onConnect }) {
   const [isConnectedToAp, setIsConnectedToAp] = useState(false)
   const [wifiNetworks, setWifiNetworks] = useState([])
   const [selectedNetwork, setSelectedNetwork] = useState(null)
+  const [isOffline, setIsOffline] = useState(false)
 
+  // Check if we're connected to the ESP32 AP
+  useEffect(() => {
+    const checkConnection = async () => {
+      try {
+        const response = await fetch(STATUS_ENDPOINT, {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+          },
+          signal: AbortSignal.timeout(2000),
+        })
+        setIsOffline(false)
+      } catch (error) {
+        setIsOffline(true)
+      }
+    }
+
+    if (isOpen) {
+      checkConnection()
+    }
+  }, [isOpen])
+
+  // Reset state when modal opens
   useEffect(() => {
     if (isOpen) {
       setStep(1)
@@ -39,13 +65,11 @@ export default function ConnectionModal({ isOpen, onClose, onConnect }) {
       setDeviceIp("")
       setWifiNetworks([])
       setSelectedNetwork(null)
-
-      // Check if connected to ESP32 AP
       checkApConnection()
     }
   }, [isOpen])
 
-  // Check if connected to ESP32 AP by trying to fetch the status
+  // Check if connected to ESP32 AP
   const checkApConnection = async () => {
     setScanning(true)
     setError(null)
@@ -56,14 +80,11 @@ export default function ConnectionModal({ isOpen, onClose, onConnect }) {
         headers: {
           Accept: "application/json",
         },
-        // Short timeout since we're checking if we can reach the ESP32
         signal: AbortSignal.timeout(2000),
       })
 
       if (response.ok) {
         setIsConnectedToAp(true)
-
-        // If already connected to a WiFi network, show that status
         const data = await response.json()
         if (data.status === "connected") {
           setConnectionStatus("connected")
@@ -72,12 +93,10 @@ export default function ConnectionModal({ isOpen, onClose, onConnect }) {
           setStep(3)
           onConnect(true)
         } else if (data.status === "connecting") {
-          // If connecting, poll for status updates
           setConnectionStatus("connecting")
           setStep(2)
           pollConnectionStatus()
         } else {
-          // If not connected, scan for WiFi networks
           scanWifiNetworks()
         }
       } else {
@@ -173,6 +192,11 @@ export default function ConnectionModal({ isOpen, onClose, onConnect }) {
       return
     }
 
+    if (!user?.uid || !user?.email) {
+      setError("User information not available")
+      return
+    }
+
     const networkSsid = selectedNetwork ? selectedNetwork.ssid : ssid
 
     try {
@@ -188,6 +212,8 @@ export default function ConnectionModal({ isOpen, onClose, onConnect }) {
         body: JSON.stringify({
           ssid: networkSsid,
           password: password,
+          uid: user.uid,
+          email: user.email
         }),
       })
 
@@ -233,15 +259,37 @@ export default function ConnectionModal({ isOpen, onClose, onConnect }) {
       <div className="bg-[#0A0F09] border border-[#1A1F19] rounded-[30px] w-full max-w-md overflow-hidden">
         <div className="p-6">
           <div className="flex justify-between items-center mb-6">
-            <h2 className="text-xl font-bold text-white">
-              {step === 1 && "Connect to Wi-Fi"}
-              {step === 2 && "Connecting..."}
-              {step === 3 && "Connection Status"}
-            </h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-bold text-white">
+                {step === 1 && "Connect to Wi-Fi"}
+                {step === 2 && "Connecting..."}
+                {step === 3 && "Connection Status"}
+              </h2>
+              <div className="relative">
+                <div className={`w-2 h-2 rounded-full ${
+                  isConnectedToAp 
+                    ? connectionStatus === "connected" 
+                      ? "bg-green-500" 
+                      : connectionStatus === "connecting"
+                        ? "bg-yellow-500 animate-pulse"
+                        : "bg-gray-500"
+                    : "bg-red-500"
+                }`} />
+              </div>
+            </div>
             <button onClick={onClose} className="text-gray-400 hover:text-white">
               <X size={24} />
             </button>
           </div>
+
+          {isOffline && (
+            <div className="bg-yellow-500 bg-opacity-10 text-yellow-400 p-4 rounded-lg mb-4">
+              <p className="text-sm">
+                You are currently offline. This is normal when connected to the ESP32 setup network.
+                The app will continue to function in offline mode.
+              </p>
+            </div>
+          )}
 
           {/* Step 1: Check AP connection and enter Wi-Fi credentials */}
           {step === 1 && (

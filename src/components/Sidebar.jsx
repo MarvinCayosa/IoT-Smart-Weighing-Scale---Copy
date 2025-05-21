@@ -11,7 +11,7 @@ const Sidebar = () => {
   const isActive = (path) => location.pathname === path
 
   return (
-    <div className="fixed left-8 top-1/2 transform -translate-y-1/2 h-[90vh] w-16 md:w-20 mr-4 
+    <div className="fixed left-8 top-1/2 transform -translate-y-1/2 h-[90vh] w-16 md:w-20 
       bg-[#8E8E8E] bg-opacity-10 backdrop-blur-30 rounded-3xl 
       flex flex-col justify-between items-center py-4 shadow-lg z-50">
 

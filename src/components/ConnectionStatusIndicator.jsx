@@ -9,6 +9,7 @@ const STATUS_ENDPOINT = `http://${ESP32_AP_IP}/status`
 
 export default function ConnectionStatusIndicator({ isConnected, onClick }) {
   const [localStatus, setLocalStatus] = useState(isConnected)
+  const [isChecking, setIsChecking] = useState(false)
 
   // Periodically check connection status if we're in normal operation mode
   // (not in AP setup mode)
@@ -19,6 +20,7 @@ export default function ConnectionStatusIndicator({ isConnected, onClick }) {
     if (isConnected) {
       const checkStatus = async () => {
         try {
+          setIsChecking(true)
           const response = await fetch(STATUS_ENDPOINT, {
             method: "GET",
             headers: {
@@ -37,6 +39,8 @@ export default function ConnectionStatusIndicator({ isConnected, onClick }) {
         } catch (err) {
           // If we can't reach the ESP32, assume it's not connected
           setLocalStatus(false)
+        } finally {
+          setIsChecking(false)
         }
       }
 
@@ -55,16 +59,13 @@ export default function ConnectionStatusIndicator({ isConnected, onClick }) {
       onClick={onClick}
       className="flex items-center gap-2 bg-[#FFFEFE] bg-opacity-10 backdrop-blur-30 rounded-full px-4 py-2 transition-all hover:bg-opacity-20"
     >
-      {localStatus ? (
-        <>
-          <Wifi size={18} className="text-green-400" />
-          <span className="text-green-400 font-medium">Online</span>
-        </>
+      <span className="text-white">Sync Device</span>
+      {isChecking ? (
+        <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
+      ) : localStatus ? (
+        <div className="w-2 h-2 rounded-full bg-green-500" />
       ) : (
-        <>
-          <WifiOff size={18} className="text-red-400" />
-          <span className="text-red-400 font-medium">Offline</span>
-        </>
+        <div className="w-2 h-2 rounded-full bg-red-500" />
       )}
     </button>
   )

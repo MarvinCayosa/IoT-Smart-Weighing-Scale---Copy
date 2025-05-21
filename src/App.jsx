@@ -21,51 +21,61 @@ const ProtectedRoute = ({ children }) => {
   return children
 }
 
-function App() {
+// Main App Content
+const AppContent = () => {
   const [showHeightModal, setShowHeightModal] = useState(false)
+  const { user } = useAuth()
 
   // Check if height is stored in localStorage on initial load
   useEffect(() => {
-    const height = localStorage.getItem("userHeight")
-    if (!height) {
-      setShowHeightModal(true)
+    if (user) {  // Only check for height if user is logged in
+      const height = localStorage.getItem("userHeight")
+      if (!height) {
+        setShowHeightModal(true)
+      }
     }
-  }, [])
+  }, [user])  // Add user as a dependency
 
   return (
+    <Router>
+      {showHeightModal && <HeightModal onClose={() => setShowHeightModal(false)} />}
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <Dashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/history"
+          element={
+            <ProtectedRoute>
+              <History />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute>
+              <Settings />
+            </ProtectedRoute>
+          }
+        />
+        <Route path="*" element={<Navigate to="/" />} />
+      </Routes>
+    </Router>
+  )
+}
+
+function App() {
+  return (
     <AuthProvider>
-      <Router>
-        {showHeightModal && <HeightModal onClose={() => setShowHeightModal(false)} />}
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<Signup />} />
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <Dashboard />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/history"
-            element={
-              <ProtectedRoute>
-                <History />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/settings"
-            element={
-              <ProtectedRoute>
-                <Settings />
-              </ProtectedRoute>
-            }
-          />
-          <Route path="*" element={<Navigate to="/" />} />
-        </Routes>
-      </Router>
+      <AppContent />
     </AuthProvider>
   )
 }
