@@ -7,7 +7,7 @@ import ConnectionStatusIndicator from "../components/ConnectionStatusIndicator"
 import ConnectionModal from "../components/ConnectionModal"
 import WeighingScale from "../components/WeighingScale"
 import { useAuth } from "../context/AuthContext"
-import { Activity } from "lucide-react"
+import { Activity, Thermometer, RefreshCw } from "lucide-react"
 
 const Dashboard = () => {
   const { user, getHealthData, setupUserDataListener, updateUserData, error: authError } = useAuth()
@@ -22,103 +22,96 @@ const Dashboard = () => {
   const [esp32Status, setEsp32Status] = useState('offline')
   const [isCheckingStatus, setIsCheckingStatus] = useState(false)
   const [healthData, setHealthData] = useState({
-    weight: 0,
-    bpm: 0,
-    spo2: 0,
-    temperature: 0,
+    weight: null,
+    bpm: null,
+    spo2: null,
+    temperature: null,
     batteryLevel: 100,
-    FSR1: 0,
-    FSR2: 0,
-    FSR3: 0,
-    FSR4: 0,
+    fsr1: null,
+    fsr2: null,
+    fsr3: null,
+    fsr4: null,
   })
-  const [bmi, setBmi] = useState(0)
+  const [bmi, setBmi] = useState(null)
   const [bleHealthData, setBleHealthData] = useState(null)
   const [error, setError] = useState(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [username, setUsername] = useState("")
+  const [hasInitialData, setHasInitialData] = useState(false)
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordingProgress, setRecordingProgress] = useState(0)
+  const [isComplete, setIsComplete] = useState(false)
 
   // Set up real-time listener for user data
   useEffect(() => {
     if (user?.uid) {
+      console.log("Setting up real-time listener for user:", user.uid);
       const unsubscribe = setupUserDataListener(user.uid, (userData) => {
-        // Update health data with user's stored data
-        setHealthData(prev => ({
-          ...prev,
-          weight: userData.healthData?.weight || prev.weight,
-          bpm: userData.healthData?.bpm || prev.bpm,
-          spo2: userData.healthData?.spo2 || prev.spo2,
-          temperature: userData.healthData?.temperature || prev.temperature,
-          bodyFat: userData.healthData?.bodyFat || prev.bodyFat,
-          bodyWater: userData.healthData?.bodyWater || prev.bodyWater,
-          skeletalMuscle: userData.healthData?.skeletalMuscle || prev.skeletalMuscle,
-          FSR1: userData.FSR1 || prev.FSR1,
-          FSR2: userData.FSR2 || prev.FSR2,
-          FSR3: userData.FSR3 || prev.FSR3,
-          FSR4: userData.FSR4 || prev.FSR4,
-        }))
+        console.log("Received real-time update:", userData);
         
-        // Set BMI if available
-        if (userData.bmi) {
-          setBmi(userData.bmi)
-        }
-
-        setIsLoading(false)
-      })
-
-      return () => unsubscribe()
-    }
-  }, [user, setupUserDataListener])
-
-  // Initial health data fetch
-  useEffect(() => {
-    const loadHealthData = async () => {
-      if (user?.uid) {
-        try {
-          setIsLoading(true)
-          setError(null)
-          console.log("Loading health data for user:", user.uid)
-          
-          const healthData = await getHealthData(user.uid)
-          console.log("Received health data:", healthData)
-          
-          if (healthData) {
-            // Update health data state with data from Firestore
-            setHealthData(prev => ({
+        // Update health data with user's stored data from latestData
+        if (userData.latestData) {
+          setHealthData(prev => {
+            const newData = {
               ...prev,
-              weight: healthData.healthData?.weight || prev.weight,
-              bpm: healthData.healthData?.bpm || prev.bpm,
-              spo2: healthData.healthData?.spo2 || prev.spo2,
-              temperature: healthData.healthData?.temperature || prev.temperature,
-              bodyFat: healthData.healthData?.bodyFat || prev.bodyFat,
-              bodyWater: healthData.healthData?.bodyWater || prev.bodyWater,
-              skeletalMuscle: healthData.healthData?.skeletalMuscle || prev.skeletalMuscle,
-              FSR1: healthData.FSR1 || prev.FSR1,
-              FSR2: healthData.FSR2 || prev.FSR2,
-              FSR3: healthData.FSR3 || prev.FSR3,
-              FSR4: healthData.FSR4 || prev.FSR4,
-            }))
-            
-            // Set BMI if available
-            if (healthData.bmi) {
-              setBmi(healthData.bmi)
+              weight: userData.latestData.weight ?? prev.weight,
+              bpm: userData.latestData.heart_rate ?? prev.bpm,
+              spo2: userData.latestData.spo2 ?? prev.spo2,
+              temperature: userData.latestData.temperature ?? prev.temperature,
+              fsr1: userData.latestData.fsr1 ?? prev.fsr1,
+              fsr2: userData.latestData.fsr2 ?? prev.fsr2,
+              fsr3: userData.latestData.fsr3 ?? prev.fsr3,
+              fsr4: userData.latestData.fsr4 ?? prev.fsr4,
+              bodyFat: userData.latestData.bodyFat ?? prev.bodyFat,
+              bodyWater: userData.latestData.bodyWater ?? prev.bodyWater,
+              skeletalMuscle: userData.latestData.skeletalMuscle ?? prev.skeletalMuscle
+            };
+            // Check if we have any non-null values
+            if (!hasInitialData && Object.values(newData).some(val => val !== null)) {
+              setHasInitialData(true);
             }
-
-            // Show height modal if height is missing or 0
-            if (!healthData.height || healthData.height === 0) {
-              setShowHeightModal(true)
-            }
-          }
-        } catch (error) {
-          console.error("Error in loadHealthData:", error)
-          setError(error.message || "Failed to load health data")
-        } finally {
-          setIsLoading(false)
+            return newData;
+          });
         }
-      }
-    }
+        
+        // Set username from userInfo
+        if (userData.userInfo?.username) {
+          setUsername(userData.userInfo.username);
+        }
+        
+        // Set height if available and show height modal if not set
+        if (userData.userInfo?.height) {
+          calculateBMI(userData.userInfo.height);
+          setShowHeightModal(false); // Ensure modal is closed if height exists
+        } else if (!userData.userInfo?.height && !showHeightModal) {
+          setShowHeightModal(true); // Only show modal if height doesn't exist and modal isn't already showing
+        }
 
-    loadHealthData()
-  }, [user, getHealthData])
+        setIsLoading(false);
+      });
+
+      // Cleanup subscription on unmount
+      return () => {
+        console.log("Cleaning up real-time listener");
+        unsubscribe();
+      };
+    }
+  }, [user, setupUserDataListener, hasInitialData, showHeightModal]);
+
+  // Add effect to calculate BMI whenever weight changes
+  useEffect(() => {
+    if (user?.userInfo?.height && healthData.weight) {
+      calculateBMI(user.userInfo.height);
+    }
+  }, [healthData.weight, user?.userInfo?.height]);
+
+  // Remove the initial health data fetch since we're using real-time updates
+  useEffect(() => {
+    if (user?.uid) {
+      setIsLoading(true);
+      setError(null);
+    }
+  }, [user]);
 
   // Remove the height check from localStorage since we're using Firestore
   useEffect(() => {
@@ -160,6 +153,7 @@ const Dashboard = () => {
       if (user?.uid) {
         await updateUserData(user.uid, { height: Number.parseFloat(height) })
         setShowHeightModal(false)
+        calculateBMI(Number.parseFloat(height))
       }
     } catch (error) {
       console.error("Error updating height:", error)
@@ -200,10 +194,13 @@ const Dashboard = () => {
     setShowConnectionModal(false)
   }
 
-  const handleDeviceConnect = (status) => {
+  const handleDeviceConnect = (status, ipAddress) => {
     setIsConnected(status)
-    // Save connection state to localStorage
+    // Save connection state and IP address to localStorage
     localStorage.setItem("bleConnected", status.toString())
+    if (ipAddress) {
+      localStorage.setItem("esp32IP", ipAddress)
+    }
   }
 
   // Handle health data updates
@@ -222,6 +219,10 @@ const Dashboard = () => {
           bodyWater: data.bodyWater,
           skeletalMuscle: data.skeletalMuscle
         })
+        // Data received and updated, session is complete
+        setIsRecording(false);
+        setIsLoading(false);
+        setIsComplete(true);
       }
     } catch (error) {
       console.error("Error updating health data:", error)
@@ -235,10 +236,68 @@ const Dashboard = () => {
     return "#22c55e"; // green
   }
 
-  const handleSessionSubmit = (sessionName) => {
-    // Handle session start logic here
-    console.log("Starting session:", sessionName)
-    setShowSessionModal(false)
+  const handleSessionSubmit = async (sessionName) => {
+    try {
+      const esp32IP = "192.168.139.68"; // Updated IP address
+
+      console.log("Triggering recording session on ESP32...");
+      console.log("Sending POST request to:", `http://${esp32IP}/trigger-record`);
+
+      // Reset states
+      setIsRecording(true);
+      setIsComplete(false);
+      setRecordingProgress(0);
+      setIsLoading(true);
+
+      // Start progress animation
+      const startTime = Date.now();
+      const duration = 10000; // 10 seconds
+
+      const progressInterval = setInterval(() => {
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min((elapsed / duration) * 100, 100);
+        setRecordingProgress(progress);
+
+        if (progress >= 100) {
+          clearInterval(progressInterval);
+          setIsComplete(true);
+          setIsRecording(false);
+          setIsLoading(false);
+        }
+      }, 50);
+
+      // Make POST request to ESP32's trigger endpoint
+      const response = await fetch(`http://${esp32IP}/trigger-record`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: '' // Empty body as expected by ESP32
+      });
+
+      console.log("Response status:", response.status);
+      const result = await response.text();
+      console.log('ESP32 Response:', result);
+
+      if (!response.ok) {
+        throw new Error(`Failed to trigger recording: ${result}`);
+      }
+
+    } catch (error) {
+      console.error('Error triggering recording:', error);
+      setError(`Failed to start recording session: ${error.message}`);
+      setIsRecording(false);
+      setRecordingProgress(0);
+      setIsComplete(false);
+      setIsLoading(false);
+    }
+  }
+
+  const handleDismiss = () => {
+    setIsRecording(false);
+    setRecordingProgress(0);
+    setIsComplete(false);
+    setShowSessionModal(false);
   }
 
   return (
@@ -247,292 +306,318 @@ const Dashboard = () => {
       <div className="fixed w-[1000px] h-[1000px] bg-[#D3A2FF] opacity-100 blur-[800px] rounded-full top-[-1000px] left-[-350px] z-0"></div>
       <div className="fixed w-[1000px] h-[1000px] bg-[#A9DEFF] opacity-100 blur-[800px] rounded-full bottom-[-1000px] right-[-350px] z-0"></div>
 
-      {/* Sidebar */}
-      <Sidebar />
+      {/* Sidebar - Hidden on medium and small screens */}
+      <div className="hidden lg:block">
+        <Sidebar />
+      </div>
 
       {/* Main content */}
-      <main className="flex-1 ml-24 md:ml-28 px-4 md:px-10 pt-8 pb-20 md:pb-8 relative z-10 overflow-y-auto mt-[5vh]">
-        <div className="max-w-6xl mx-auto">
-          {/* Error Display */}
-          {(error || authError) && (
-            <div className="mb-4 p-4 bg-red-500 bg-opacity-20 text-red-300 rounded-lg">
-              {error || authError}
-            </div>
-          )}
+      <main className="flex-1 lg:ml-24 md:ml-0 px-3 md:px-6 pt-8 md:pt-8 pb-24 md:pb-6 relative z-10 h-screen overflow-y-auto lg:flex lg:items-center">
+        <div className="w-[95%] sm:w-[90%] md:w-[85%] lg:w-[80%] mx-auto flex flex-col mb-16 lg:mb-0">
+          <div className="w-full">
+            <header className="mb-3 w-full flex justify-between items-center">
+              <div>
+                <h1 className="text-lg sm:text-xl md:text-2xl font-bold">
+                  Welcome, <span className="text-[#D3A2FF]">{username || "User"}</span>!
+                </h1>
+                <p className="text-[10px] sm:text-xs text-gray-400">Monitor your health metrics in real-time</p>
+              </div>
 
-          {/* Loading State */}
-          {isLoading && (
-            <div className="flex items-center justify-center h-32">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
-            </div>
-          )}
-
-          <header className="mb-4 sm:mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h1 className="text-2xl sm:text-[28px] md:text-[36px] font-bold">
-                Welcome, <span className="text-[#D3A2FF]">{user?.name || "User"}</span>!
-              </h1>
-              <p className="text-sm sm:text-[16px] text-gray-400">Here Is Your Dashboard</p>
-            </div>
-
-            {/* Action buttons */}
-            <div className="mt-2 sm:mt-0 flex items-center gap-4">
-              <div className="flex items-center gap-2 bg-[#FFFEFE] bg-opacity-10 backdrop-blur-30 rounded-[20px] sm:rounded-[30px] px-4 py-2">
-                <div className="relative w-6 h-3">
-                  <div className="absolute inset-0 border-2 border-white rounded-sm">
-                    <div 
-                      className="h-full bg-white rounded-sm transition-all duration-300"
-                      style={{ 
-                        width: `${healthData.batteryLevel}%`,
-                        backgroundColor: getBatteryColor(healthData.batteryLevel)
-                      }}
-                    />
-                  </div>
-                  <div className="absolute -right-1 top-1/2 -translate-y-1/2 w-1 h-1.5 bg-white rounded-r-sm" />
-                </div>
-                <span className={healthData.batteryLevel <= 20 ? "text-red-500" : healthData.batteryLevel <= 50 ? "text-yellow-500" : "text-green-500"}>
-                  {healthData.batteryLevel}%
+              {/* Device Status Button */}
+              <div 
+                onClick={handleConnectionStatusClick}
+                className="flex items-center gap-1.5 bg-[#020202] bg-opacity-40 backdrop-blur-30 rounded-[12px] sm:rounded-[15px] px-3 py-1.5 cursor-pointer hover:bg-opacity-60 transition-all duration-200"
+              >
+                <span className="text-[10px] sm:text-xs font-medium flex items-center gap-1">
+                  <RefreshCw className="w-3 h-3" />
+                  Sync your device
                 </span>
               </div>
-              <ConnectionStatusIndicator isConnected={isConnected} onClick={handleConnectionStatusClick} />
-            </div>
-          </header>
+            </header>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 items-start">
-            {/* Main Section Left */}
-            <div className="lg:col-span-2 space-y-4 sm:space-y-6">
-              {/* Weight */}
-              <div>
-                <h2 className="text-sm sm:text-base text-gray-300 mb-0">Weight</h2>
-                <div className="flex items-end text-white">
-                  <span className="text-[5rem] xs:text-[5rem] sm:text-[8rem] md:text-[8rem] lg:text-[12rem] xl:text-[15rem] 2xl:text-[15rem] font-bold leading-none">{healthData.weight}</span>
-                  <span className="text-2xl xs:text-3xl sm:text-4xl md:text-5xl lg:text-6xl xl:text-7xl 2xl:text-8xl ml-2 mb-2 sm:mb-3 md:mb-4 lg:mb-6">kg</span>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 sm:gap-3 items-start">
+              {/* Left Column - Weight */}
+              <div className="h-full flex items-center">
+                <div className="w-full">
+                  <h2 className="text-xs sm:text-sm text-gray-300 mb-0">Weight</h2>
+                  <div className="flex items-end text-white">
+                    <span className="text-[4rem] xs:text-[5rem] sm:text-[6rem] md:text-[7rem] lg:text-[8rem] xl:text-[9rem] 2xl:text-[10rem] font-bold leading-none">
+                      {isLoading && !hasInitialData ? (
+                        <div className="animate-pulse bg-gray-700 rounded-lg w-20 h-16"></div>
+                      ) : (
+                        healthData.weight ? healthData.weight.toFixed(1) : "--"
+                      )}
+                    </span>
+                    <span className="text-base xs:text-lg sm:text-xl md:text-2xl lg:text-3xl xl:text-4xl 2xl:text-5xl ml-1.5 mb-1.5 sm:mb-2 md:mb-3 lg:mb-4">kg</span>
+                  </div>
                 </div>
               </div>
 
-              {/* Vitals and BMI Container */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-                {/* Vitals */}
-                <div className="grid grid-cols-2 gap-3 sm:gap-4">
+              {/* Right Column - Vitals and BMI */}
+              <div className="space-y-2 sm:space-y-3 h-full">
+                {/* Vitals Grid */}
+                <div className="grid grid-cols-2 gap-2 sm:gap-3">
                   <button 
                     onClick={() => setShowSessionModal(true)}
-                    className="bg-[#D3A2FF] text-black rounded-[20px] sm:rounded-[30px] p-3 sm:p-4 flex items-center hover:bg-[#C090EE] transition-all duration-200"
+                    className="bg-[#D3A2FF] text-black rounded-[12px] sm:rounded-[15px] p-2 sm:p-2.5 flex items-center hover:bg-[#C090EE] transition-all duration-200"
                   >
-                    <div className="bg-black bg-opacity-10 p-2 rounded-full mr-2 sm:mr-3">
-                      <svg className="w-4 h-4 sm:w-5 sm:h-5 text-black" fill="currentColor" viewBox="0 0 24 24">
+                    <div className="bg-black bg-opacity-10 p-1.5 rounded-full mr-2">
+                      <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-black" fill="currentColor" viewBox="0 0 24 24">
                         <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
                       </svg>
                     </div>
-                    <div>
-                      <p className="text-lg sm:text-xl font-bold">Start Session</p>
+                    <div className="text-center">
+                      <p className="text-sm sm:text-base font-bold">Start Session</p>
                       <p className="text-xs text-black text-opacity-70"></p>
                     </div>
                   </button>
-                  <div className="bg-[#FFFEFE] bg-opacity-10 backdrop-blur-30 rounded-[20px] sm:rounded-[30px] p-3 sm:p-4 flex items-center relative">
+                  <div className="bg-[#FFFEFE] bg-opacity-10 backdrop-blur-30 rounded-[12px] sm:rounded-[15px] p-2 sm:p-2.5 flex items-center relative group">
                     <button 
                       onClick={() => setShowBpmInfoModal(true)}
-                      className="absolute top-2 right-2 sm:top-3 sm:right-3 text-gray-500 hover:text-[#D3A2FF] transition-colors duration-200"
+                      className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 text-gray-500 hover:text-[#D3A2FF] transition-colors duration-200"
                     >
-                      <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                     </button>
-                    <div className="bg-gray-700 p-2 rounded-full mr-2 sm:mr-3">
-                      <svg className="w-4 h-4 sm:w-5 sm:h-5 text-red-500" fill="currentColor" viewBox="0 0 24 24">
+                    <div className="bg-gray-700 p-1.5 rounded-full mr-2">
+                      <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-red-500" fill="currentColor" viewBox="0 0 24 24">
                         <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5C2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3C19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
                       </svg>
                     </div>
-                    <div>
-                      <p className="text-xl sm:text-2xl font-bold">{healthData.bpm}</p>
+                    <div className="relative flex-1">
+                      <p className="text-base sm:text-lg font-bold">
+                        {isLoading && !hasInitialData ? (
+                          <div className="animate-pulse bg-gray-700 rounded-lg w-10 h-5"></div>
+                        ) : (
+                          healthData.bpm ?? "--"
+                        )}
+                      </p>
                       <p className="text-xs text-gray-400">bpm</p>
                     </div>
+                    {/* Heart Rate Bar */}
+                    {healthData.bpm && (
+                      <div className="relative w-1.5 h-14 bg-[#1A1F19] rounded-full ml-1.5 mr-4 group">
+                        <div 
+                          className="absolute bottom-0 w-full rounded-full transition-all duration-300"
+                          style={{
+                            height: `${Math.min(Math.max(((healthData.bpm - 40) / 120) * 100, 0), 100)}%`,
+                            backgroundColor: healthData.bpm > 100 || healthData.bpm < 60 
+                              ? '#FF6B6B' 
+                              : '#51CF66'
+                          }}
+                        />
+                        {/* Tooltip */}
+                        <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 hidden group-hover:block bg-[#1A1F19] border border-[#2A2F29] text-white text-xs rounded-lg p-1.5 w-40 z-10 shadow-lg">
+                          {healthData.bpm > 100 ? (
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-[#FF6B6B] animate-pulse" />
+                              <p>High Heart Rate Alert</p>
+                            </div>
+                          ) : healthData.bpm < 60 ? (
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-[#FF6B6B] animate-pulse" />
+                              <p>Low Heart Rate Alert</p>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-[#51CF66]" />
+                              <p>Normal Heart Rate</p>
+                            </div>
+                          )}
+                          <p className="mt-1 text-gray-400 text-[10px]">
+                            {healthData.bpm > 100 
+                              ? "Your heart rate is elevated. Consider resting and monitoring."
+                              : healthData.bpm < 60
+                              ? "Your heart rate is lower than normal. This may be normal for athletes."
+                              : "Your heart rate is within the normal range (60-100 bpm)."}
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="bg-[#FFFEFE] bg-opacity-10 backdrop-blur-30 rounded-[20px] sm:rounded-[30px] p-3 sm:p-4 flex items-center relative">
+                  <div className="bg-[#FFFEFE] bg-opacity-10 backdrop-blur-30 rounded-[12px] sm:rounded-[15px] p-2 sm:p-2.5 flex items-center relative group">
                     <button 
                       onClick={() => setShowSpo2InfoModal(true)}
-                      className="absolute top-2 right-2 sm:top-3 sm:right-3 text-gray-500 hover:text-[#D3A2FF] transition-colors duration-200"
+                      className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 text-gray-500 hover:text-[#D3A2FF] transition-colors duration-200"
                     >
-                      <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                     </button>
-                    <div className="bg-gray-700 p-2 rounded-full mr-2 sm:mr-3">
-                      <svg className="w-4 h-4 sm:w-5 sm:h-5 text-blue-400" fill="currentColor" viewBox="0 0 24 24">
+                    <div className="bg-gray-700 p-1.5 rounded-full mr-2">
+                      <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-blue-400" fill="currentColor" viewBox="0 0 24 24">
                         <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" />
                         <path d="M12 6a6 6 0 100 12 6 6 0 000-12z" />
                       </svg>
                     </div>
-                    <div>
-                      <p className="text-xl sm:text-2xl font-bold">{healthData.spo2}%</p>
+                    <div className="relative flex-1">
+                      <p className="text-base sm:text-lg font-bold">
+                        {isLoading && !hasInitialData ? (
+                          <div className="animate-pulse bg-gray-700 rounded-lg w-10 h-5"></div>
+                        ) : (
+                          healthData.spo2 ? `${healthData.spo2}%` : "--"
+                        )}
+                      </p>
                       <p className="text-xs text-gray-400">SpO₂</p>
                     </div>
+                    {/* SpO2 Bar */}
+                    {healthData.spo2 && (
+                      <div className="relative w-1.5 h-14 bg-[#1A1F19] rounded-full ml-1.5 mr-4 group">
+                        <div 
+                          className="absolute bottom-0 w-full rounded-full transition-all duration-300"
+                          style={{
+                            height: `${Math.min(Math.max(((healthData.spo2 - 80) / 20) * 100, 0), 100)}%`,
+                            backgroundColor: healthData.spo2 < 90 
+                              ? '#FF6B6B' 
+                              : healthData.spo2 < 95 
+                              ? '#FFD43B' 
+                              : '#51CF66'
+                          }}
+                        />
+                        {/* Tooltip */}
+                        <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 hidden group-hover:block bg-[#1A1F19] border border-[#2A2F29] text-white text-xs rounded-lg p-1.5 w-40 z-10 shadow-lg">
+                          {healthData.spo2 < 90 ? (
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-[#FF6B6B] animate-pulse" />
+                              <p>Critical SpO₂ Alert</p>
+                            </div>
+                          ) : healthData.spo2 < 95 ? (
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-[#FFD43B] animate-pulse" />
+                              <p>Low SpO₂ Alert</p>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-[#51CF66]" />
+                              <p>Normal SpO₂ Level</p>
+                            </div>
+                          )}
+                          <p className="mt-1 text-gray-400 text-[10px]">
+                            {healthData.spo2 < 90 
+                              ? "Your oxygen level is critically low. Seek medical attention."
+                              : healthData.spo2 < 95
+                              ? "Your oxygen level is slightly low. Monitor and rest."
+                              : "Your oxygen level is within the normal range (95-100%)."}
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="bg-[#FFFEFE] bg-opacity-10 backdrop-blur-30 rounded-[20px] sm:rounded-[30px] p-3 sm:p-4 flex items-center relative">
+                  <div className="bg-[#FFFEFE] bg-opacity-10 backdrop-blur-30 rounded-[12px] sm:rounded-[15px] p-2 sm:p-2.5 flex items-center relative group">
                     <button 
                       onClick={() => setShowTempInfoModal(true)}
-                      className="absolute top-2 right-2 sm:top-3 sm:right-3 text-gray-500 hover:text-[#D3A2FF] transition-colors duration-200"
+                      className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 text-gray-500 hover:text-[#D3A2FF] transition-colors duration-200"
                     >
-                      <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                     </button>
-                    <div className="bg-gray-700 p-2 rounded-full mr-2 sm:mr-3">
-                      <svg className="w-4 h-4 sm:w-5 sm:h-5 text-yellow-400" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z" />
-                      </svg>
+                    <div className="bg-gray-700 p-1.5 rounded-full mr-2">
+                      <Thermometer className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-yellow-400" />
                     </div>
-                    <div>
-                      <p className="text-xl sm:text-2xl font-bold">{healthData.temperature}</p>
+                    <div className="relative flex-1">
+                      <p className="text-base sm:text-lg font-bold">
+                        {isLoading && !hasInitialData ? (
+                          <div className="animate-pulse bg-gray-700 rounded-lg w-10 h-5"></div>
+                        ) : (
+                          healthData.temperature ?? "--"
+                        )}
+                      </p>
                       <p className="text-xs text-gray-400">Body Temperature</p>
                     </div>
+                    {/* Temperature Bar */}
+                    {healthData.temperature && (
+                      <div className="relative w-1.5 h-14 bg-[#1A1F19] rounded-full ml-1.5 mr-4 group">
+                        <div 
+                          className="absolute bottom-0 w-full rounded-full transition-all duration-300"
+                          style={{
+                            height: `${Math.min(Math.max(((parseFloat(healthData.temperature) - 35) / 3) * 100, 0), 100)}%`,
+                            backgroundColor: parseFloat(healthData.temperature) > 37.2 
+                              ? '#FF6B6B' 
+                              : parseFloat(healthData.temperature) < 36.1
+                              ? '#4DABF7'
+                              : '#51CF66'
+                          }}
+                        />
+                        {/* Tooltip */}
+                        <div className="absolute right-full mr-2 top-1/2 -translate-y-1/2 hidden group-hover:block bg-[#1A1F19] border border-[#2A2F29] text-white text-xs rounded-lg p-1.5 w-40 z-10 shadow-lg">
+                          {parseFloat(healthData.temperature) > 37.2 ? (
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-[#FF6B6B] animate-pulse" />
+                              <p>High Temperature Alert</p>
+                            </div>
+                          ) : parseFloat(healthData.temperature) < 36.1 ? (
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-[#4DABF7] animate-pulse" />
+                              <p>Low Temperature Alert</p>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-1.5 h-1.5 rounded-full bg-[#51CF66]" />
+                              <p>Normal Temperature</p>
+                            </div>
+                          )}
+                          <p className="mt-1 text-gray-400 text-[10px]">
+                            {parseFloat(healthData.temperature) > 37.2 
+                              ? "Your body temperature is elevated. Consider monitoring for fever."
+                              : parseFloat(healthData.temperature) < 36.1
+                              ? "Your body temperature is lower than normal. Keep warm."
+                              : "Your body temperature is within the normal range (36.1°C - 37.2°C)."}
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 {/* BMI */}
-                <div className="bg-[#FFFEFE] bg-opacity-10 backdrop-blur-30 rounded-[20px] sm:rounded-[30px] p-4 sm:p-6 flex flex-col items-center justify-center h-full relative">
+                <div className="bg-[#FFFEFE] bg-opacity-10 backdrop-blur-30 rounded-[12px] sm:rounded-[15px] p-2.5 sm:p-3 flex flex-col items-center justify-center relative">
                   <button 
                     onClick={() => setShowBmiInfoModal(true)}
-                    className="absolute top-4 right-4 sm:top-5 sm:right-5 text-gray-500 hover:text-[#D3A2FF] transition-colors duration-200"
+                    className="absolute top-2 right-2 sm:top-3 sm:right-3 text-gray-500 hover:text-[#D3A2FF] transition-colors duration-200"
                   >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                   </button>
-                  <h2 className="text-xs sm:text-sm text-gray-400 mb-2">BMI</h2>
-                  <span className="text-4xl sm:text-5xl md:text-6xl font-bold mb-2">{bmi || "--"}</span>
-                  <div className={`px-3 sm:px-4 py-1 rounded-full text-xs sm:text-sm ${getBmiColorClass()}`}>
-                    {getBmiCategory() || "Calculating..."}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Body Composition Chart - Right Section */}
-            <div className="bg-[#020202] bg-opacity-60 backdrop-blur-30 rounded-[20px] sm:rounded-[40px] p-4 sm:p-6 lg:h-full flex flex-col">
-              {/* Body Composition Metrics */}
-              <div className="flex-1 flex flex-col justify-center mb-6">
-                <h2 className="text-base sm:text-lg font-semibold mb-6 text-center">Body Composition</h2>
-                <div className="flex justify-center">
-                  <div className="relative w-[160px] h-[160px] sm:w-[180px] sm:h-[180px] md:w-[200px] md:h-[200px] lg:w-[220px] lg:h-[220px]">
-                    {/* Outer Circle - Body Fat */}
-                    <svg className="absolute w-full h-full" viewBox="0 0 261 261">
-                      <circle
-                        cx="130.5"
-                        cy="130.5"
-                        r="124"
-                        fill="none"
-                        stroke="rgba(96,96,96,0.15)"
-                        strokeWidth="13"
-                      />
-                      <circle
-                        cx="130.5"
-                        cy="130.5"
-                        r="124"
-                        fill="none"
-                        stroke="rgba(219,72,72,0.91)"
-                        strokeWidth="13"
-                        strokeLinecap="round"
-                        strokeDasharray={`${(healthData.bodyFat / 100) * 2 * Math.PI * 124} ${2 * Math.PI * 124}`}
-                        transform="rotate(-90 130.5 130.5)"
-                        className="transition-all duration-1000 ease-in-out"
-                      />
-                    </svg>
-                    
-                    {/* Middle Circle - Body Water */}
-                    <svg className="absolute w-[87%] h-[87%] left-[6.5%] top-[6.5%]" viewBox="0 0 227 227">
-                      <circle
-                        cx="113.5"
-                        cy="113.5"
-                        r="107"
-                        fill="none"
-                        stroke="rgba(96,96,96,0.15)"
-                        strokeWidth="13"
-                      />
-                      <circle
-                        cx="113.5"
-                        cy="113.5"
-                        r="107"
-                        fill="none"
-                        stroke="#169CD2"
-                        strokeWidth="13"
-                        strokeLinecap="round"
-                        strokeDasharray={`${(healthData.bodyWater / 100) * 2 * Math.PI * 107} ${2 * Math.PI * 107}`}
-                        transform="rotate(-90 113.5 113.5)"
-                        className="transition-all duration-1000 ease-in-out"
-                      />
-                    </svg>
-                    
-                    {/* Inner Circle - Skeletal Muscle */}
-                    <svg className="absolute w-[74%] h-[74%] left-[13%] top-[13%]" viewBox="0 0 193 193">
-                      <circle
-                        cx="96.5"
-                        cy="96.5"
-                        r="90"
-                        fill="none"
-                        stroke="rgba(96,96,96,0.15)"
-                        strokeWidth="13"
-                      />
-                      <circle
-                        cx="96.5"
-                        cy="96.5"
-                        r="90"
-                        fill="none"
-                        stroke="#DED24C"
-                        strokeWidth="13"
-                        strokeLinecap="round"
-                        strokeDasharray={`${(healthData.skeletalMuscle / 100) * 2 * Math.PI * 90} ${2 * Math.PI * 90}`}
-                        transform="rotate(-90 96.5 96.5)"
-                        className="transition-all duration-1000 ease-in-out"
-                      />
-                    </svg>
-
-                    {/* Center Content */}
-                    <div className="absolute inset-0 flex flex-col items-center justify-center">
-                      <div className="text-center">
-                        <div className="flex items-center gap-1.5 mb-1.5">
-                          <div className="w-2 h-2 rounded-full bg-[rgba(219,72,72,0.91)]"></div>
-                          <span className="text-xs sm:text-sm text-gray-300">Body Fat: {healthData.bodyFat}%</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 mb-1.5">
-                          <div className="w-2 h-2 rounded-full bg-[#169CD2]"></div>
-                          <span className="text-xs sm:text-sm text-gray-300">Body Water: {healthData.bodyWater}%</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <div className="w-2 h-2 rounded-full bg-[#DED24C]"></div>
-                          <span className="text-xs sm:text-sm text-gray-300">Muscle: {healthData.skeletalMuscle}%</span>
-                        </div>
-                      </div>
-                    </div>
+                  <h2 className="text-xs sm:text-sm text-gray-400 mb-1">BMI</h2>
+                  <span className="text-2xl sm:text-3xl md:text-4xl font-bold mb-1">
+                    {isLoading && !hasInitialData ? (
+                      <div className="animate-pulse bg-gray-700 rounded-lg w-16 h-10"></div>
+                    ) : (
+                      bmi ?? "--"
+                    )}
+                  </span>
+                  <div className={`px-2 py-0.5 rounded-full text-xs sm:text-sm ${getBmiColorClass()}`}>
+                    {isLoading && !hasInitialData ? (
+                      <div className="animate-pulse bg-gray-700 rounded-full w-16 h-4"></div>
+                    ) : (
+                      getBmiCategory() || "Calculating..."
+                    )}
                   </div>
                 </div>
               </div>
 
-              {/* Foot Image with Pressure Labels */}
-              <div className="flex-1 flex items-end">
-                <div className="w-full h-[160px] sm:h-[180px] md:h-[200px] lg:h-[220px] relative">
+              {/* Foot Pressure Sensors - Spans both columns */}
+              <div className="lg:col-span-2 bg-[#020202] bg-opacity-60 backdrop-blur-30 rounded-[12px] sm:rounded-[20px] p-2.5 sm:p-3 mt-4 sm:mt-6">
+                <h2 className="text-sm sm:text-base font-semibold mb-3 text-center">Foot Pressure Distribution</h2>
+                <div className="w-full h-[120px] sm:h-[140px] md:h-[160px] lg:h-[180px] relative">
                   {/* Pressure Labels */}
-                  <div className="absolute inset-0 flex flex-col justify-between">
-                    {/* Top Row - Front Sensors */}
-                    <div className="flex justify-between px-4">
+                  <div className="absolute inset-0 flex flex-col justify-center">
+                    {/* Left and Right Labels */}
+                    <div className="flex justify-between px-4 sm:px-8 md:px-12 lg:px-16">
                       <div className="text-center">
-                        <div className="text-xs text-gray-400">Front Left</div>
-                        <div className="text-sm font-medium text-[#D3A2FF]">{healthData.FSR1 || 0}%</div>
+                        <div className="text-[10px] xs:text-xs sm:text-sm text-gray-400">Left</div>
+                        <div className="text-xs xs:text-sm sm:text-base md:text-lg font-medium text-[#D3A2FF]">
+                          {healthData.fsr1 || 0}%
+                        </div>
                       </div>
                       <div className="text-center">
-                        <div className="text-xs text-gray-400">Front Right</div>
-                        <div className="text-sm font-medium text-[#D3A2FF]">{healthData.FSR3 || 0}%</div>
-                      </div>
-                    </div>
-
-                    {/* Bottom Row - Back Sensors */}
-                    <div className="flex justify-between px-4">
-                      <div className="text-center">
-                        <div className="text-xs text-gray-400">Back Left</div>
-                        <div className="text-sm font-medium text-[#D3A2FF]">{healthData.FSR2 || 0}%</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-xs text-gray-400">Back Right</div>
-                        <div className="text-sm font-medium text-[#D3A2FF]">{healthData.FSR4 || 0}%</div>
+                        <div className="text-[10px] xs:text-xs sm:text-sm text-gray-400">Right</div>
+                        <div className="text-xs xs:text-sm sm:text-base md:text-lg font-medium text-[#D3A2FF]">
+                          {healthData.fsr2 || 0}%
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -540,16 +625,57 @@ const Dashboard = () => {
                   {/* Foot Image */}
                   <img 
                     src="/foot.png" 
-                    alt="Body Composition" 
+                    alt="Foot Pressure Distribution" 
                     className="w-full h-full object-contain invert"
                     style={{ opacity: 0.5 }}
                   />
+                </div>
+                {/* Balance Status */}
+                <div className="mt-2 text-center">
+                  {healthData.fsr1 && healthData.fsr2 ? (
+                    <div className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs sm:text-sm ${
+                      Math.abs(healthData.fsr1 - healthData.fsr2) <= 5 
+                        ? 'bg-green-500 bg-opacity-20 text-green-300' 
+                        : 'bg-yellow-500 bg-opacity-20 text-yellow-300'
+                    }`}>
+                      {Math.abs(healthData.fsr1 - healthData.fsr2) <= 5 ? (
+                        <>
+                          <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                          Balance Distribution
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                          </svg>
+                          Imbalance Distribution
+                          <span className="ml-1">
+                            ({healthData.fsr1 > healthData.fsr2 ? 'Left Side Heavy' : 'Right Side Heavy'})
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="inline-flex items-center px-2.5 py-1 rounded-full text-xs sm:text-sm bg-gray-500 bg-opacity-20 text-gray-300">
+                      <svg className="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      No Pressure Data
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           </div>
         </div>
       </main>
+
+      {/* Bottom Navigation - Only visible on medium and small screens */}
+      <div className="lg:hidden">
+        <Sidebar />
+      </div>
 
       {/* Modals */}
       {showHeightModal && <HeightModal onSubmit={handleHeightSubmit} onClose={() => setShowHeightModal(false)} />}
@@ -564,7 +690,7 @@ const Dashboard = () => {
           <div className="bg-gray-800 rounded-lg p-6 w-full max-w-md">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold text-white">Smart Scale Instructions</h2>
-              <button onClick={() => setShowSessionModal(false)} className="text-gray-400 hover:text-white">
+              <button onClick={handleDismiss} className="text-gray-400 hover:text-white">
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -572,47 +698,96 @@ const Dashboard = () => {
             </div>
             
             <div className="space-y-4 text-gray-300">
-              <p className="text-sm italic">
-                Follow these steps to start your session:
-              </p>
-              
-              <div className="space-y-3">
-                <div className="flex items-start">
-                  <div className="bg-[#D3A2FF] text-black rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 mr-3 mt-0.5">
-                    <span className="text-sm font-bold">1</span>
+              {!isRecording && !isComplete && !isLoading && (
+                <>
+                  <p className="text-sm italic">
+                    Follow these steps to start your session:
+                  </p>
+                  
+                  <div className="space-y-3">
+                    <div className="flex items-start">
+                      <div className="bg-[#D3A2FF] text-black rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 mr-3 mt-0.5">
+                        <span className="text-sm font-bold">1</span>
+                      </div>
+                      <p className="text-sm italic">Ensure your weighing scale status is online</p>
+                    </div>
+                    
+                    <div className="flex items-start">
+                      <div className="bg-[#D3A2FF] text-black rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 mr-3 mt-0.5">
+                        <span className="text-sm font-bold">2</span>
+                      </div>
+                      <p className="text-sm italic">Stand still on the scale with bare feet for accurate measurements</p>
+                    </div>
+                    
+                    <div className="flex items-start">
+                      <div className="bg-[#D3A2FF] text-black rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 mr-3 mt-0.5">
+                        <span className="text-sm font-bold">3</span>
+                      </div>
+                      <p className="text-sm italic">Wait for the measurements to complete (at least 10 seconds)</p>
+                    </div>
+                    
+                    <div className="flex items-start">
+                      <div className="bg-[#D3A2FF] text-black rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 mr-3 mt-0.5">
+                        <span className="text-sm font-bold">4</span>
+                      </div>
+                      <p className="text-sm italic">Check your measurements on the dashboard</p>
+                    </div>
                   </div>
-                  <p className="text-sm italic">Ensure your weighing scale status is online</p>
-                </div>
-                
-                <div className="flex items-start">
-                  <div className="bg-[#D3A2FF] text-black rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 mr-3 mt-0.5">
-                    <span className="text-sm font-bold">2</span>
-                  </div>
-                  <p className="text-sm italic">Stand still on the scale with bare feet for accurate measurements</p>
-                </div>
-                
-                <div className="flex items-start">
-                  <div className="bg-[#D3A2FF] text-black rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 mr-3 mt-0.5">
-                    <span className="text-sm font-bold">3</span>
-                  </div>
-                  <p className="text-sm italic">Wait for the measurements to complete (at least 10 seconds)</p>
-                </div>
-                
-                <div className="flex items-start">
-                  <div className="bg-[#D3A2FF] text-black rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 mr-3 mt-0.5">
-                    <span className="text-sm font-bold">4</span>
-                  </div>
-                  <p className="text-sm italic">Check your measurements on the dashboard</p>
-                </div>
-              </div>
+                </>
+              )}
 
               <div className="pt-4">
-                <button
-                  onClick={() => setShowSessionModal(false)}
-                  className="w-full px-4 py-2 bg-[#D3A2FF] text-black rounded-md hover:bg-[#C090EE] transition-colors duration-200"
-                >
-                  Start
-                </button>
+                {isLoading && (
+                  <div className="space-y-4 text-center">
+                    <div className="flex justify-center">
+                      <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-[#D3A2FF]"></div>
+                    </div>
+                    <p className="text-lg font-medium text-white">Please wait...</p>
+                    <p className="text-sm text-gray-400">Initializing recording session</p>
+                  </div>
+                )}
+
+                {isRecording && !isComplete && !isLoading && (
+                  <div className="space-y-3">
+                    <div className="w-full bg-gray-700 rounded-full h-3">
+                      <div 
+                        className="bg-[#D3A2FF] h-3 rounded-full transition-all duration-100 ease-linear"
+                        style={{ width: `${recordingProgress}%` }}
+                      ></div>
+                    </div>
+                    <p className="text-sm text-center text-gray-400">
+                      Recording in progress... {Math.round(recordingProgress)}%
+                    </p>
+                  </div>
+                )}
+
+                {isComplete && (
+                  <div className="space-y-4 text-center">
+                    <div className="w-16 h-16 mx-auto bg-green-500 bg-opacity-20 rounded-full flex items-center justify-center">
+                      <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
+                    <p className="text-lg font-medium text-white">Recording Complete!</p>
+                    <p className="text-sm text-gray-400">Your measurements have been saved.</p>
+                    <button
+                      onClick={handleDismiss}
+                      className="w-full px-4 py-2 bg-[#D3A2FF] text-black rounded-md hover:bg-[#C090EE] transition-colors duration-200"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+
+                {!isRecording && !isComplete && !isLoading && (
+                  <button
+                    onClick={() => handleSessionSubmit("new_session")}
+                    disabled={isRecording || isLoading}
+                    className="w-full px-4 py-2 bg-[#D3A2FF] text-black rounded-md hover:bg-[#C090EE] transition-colors duration-200"
+                  >
+                    {isRecording ? "Recording..." : "Start"}
+                  </button>
+                )}
               </div>
             </div>
           </div>

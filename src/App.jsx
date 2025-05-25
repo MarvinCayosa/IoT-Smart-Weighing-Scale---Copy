@@ -9,6 +9,8 @@ import History from "./pages/History"
 import Settings from "./pages/Settings"
 import HeightModal from "./components/HeightModal"
 import { AuthProvider, useAuth } from "./context/AuthContext"
+import { getDoc, doc } from "firebase/firestore"
+import { db } from "./firebase"
 
 // Protected route component
 const ProtectedRoute = ({ children }) => {
@@ -23,22 +25,10 @@ const ProtectedRoute = ({ children }) => {
 
 // Main App Content
 const AppContent = () => {
-  const [showHeightModal, setShowHeightModal] = useState(false)
   const { user } = useAuth()
-
-  // Check if height is stored in localStorage on initial load
-  useEffect(() => {
-    if (user) {  // Only check for height if user is logged in
-      const height = localStorage.getItem("userHeight")
-      if (!height) {
-        setShowHeightModal(true)
-      }
-    }
-  }, [user])  // Add user as a dependency
 
   return (
     <Router>
-      {showHeightModal && <HeightModal onClose={() => setShowHeightModal(false)} />}
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />

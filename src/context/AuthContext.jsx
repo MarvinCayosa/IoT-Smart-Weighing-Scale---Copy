@@ -9,7 +9,7 @@ import {
   onAuthStateChanged,
   updateProfile
 } from "firebase/auth"
-import { doc, setDoc, getDoc, onSnapshot, updateDoc, collection, query, where, orderBy, limit, getDocs } from "firebase/firestore"
+import { doc, setDoc, getDoc, onSnapshot, updateDoc, collection, query, where, orderBy, limit, getDocs, addDoc } from "firebase/firestore"
 import { auth, db, googleProvider } from "../firebase"
 
 const AuthContext = createContext()
@@ -58,33 +58,25 @@ export function AuthProvider({ children }) {
         throw new Error("User not found")
       }
 
-      const userData = userDoc.data()
-      console.log("User data from Firestore:", userData)
+      // Get latest data
+      const latestDataDoc = await getDoc(doc(db, "users", uid, "latestData", "latest"))
+      const latestData = latestDataDoc.exists() ? latestDataDoc.data() : {}
 
-      // Get health data from the user's document
-      const healthData = userData.healthData || {}
-      console.log("Health data from user document:", healthData)
+      // Get user info
+      const userInfo = userDoc.data().userInfo || {}
 
       // Calculate BMI if both height and weight are available
       let bmi = null
-      if (userData.height && userData.height > 0 && healthData.weight && healthData.weight > 0) {
-        const heightInMeters = userData.height / 100
-        bmi = Number.parseFloat((healthData.weight / (heightInMeters * heightInMeters)).toFixed(1))
+      if (userInfo.height && userInfo.height > 0 && latestData.weight && latestData.weight > 0) {
+        const heightInMeters = userInfo.height / 100
+        bmi = Number.parseFloat((latestData.weight / (heightInMeters * heightInMeters)).toFixed(1))
       }
 
       // Return the combined data
       return {
-        ...userData,
-        height: userData.height || 0,
-        weight: healthData.weight || 0,
-        bpm: healthData.bpm || 0,
-        spo2: healthData.spo2 || 0,
-        temperature: healthData.temperature || 0,
-        bodyFat: healthData.bodyFat || 0,
-        bodyWater: healthData.bodyWater || 0,
-        skeletalMuscle: healthData.skeletalMuscle || 0,
-        bmi: bmi,
-        lastMeasurement: healthData.timestamp || userData.lastMeasurement
+        ...userInfo,
+        ...latestData,
+        bmi: bmi
       }
     } catch (error) {
       console.error("Error in getHealthData:", error)
@@ -96,19 +88,52 @@ export function AuthProvider({ children }) {
   // Set up real-time listener for user data
   function setupUserDataListener(uid, callback) {
     try {
-      const docRef = doc(db, "users", uid)
-      return onSnapshot(docRef, (doc) => {
+      console.log("Setting up real-time listeners for user:", uid);
+      
+      // Listen to user document
+      const userRef = doc(db, "users", uid);
+      const userUnsubscribe = onSnapshot(userRef, (doc) => {
         if (doc.exists()) {
-          callback(doc.data())
+          console.log("User data updated:", doc.data());
+          callback(doc.data());
         }
       }, (error) => {
-        console.error("Error in user data listener:", error)
-        setError("Failed to listen for user data updates")
-      })
+        console.error("Error in user data listener:", error);
+        setError("Failed to listen for user data updates");
+      });
+
+      // Listen to latestData subcollection
+      const latestDataRef = doc(db, "users", uid, "latestData", "latest");
+      const latestDataUnsubscribe = onSnapshot(latestDataRef, (doc) => {
+        if (doc.exists()) {
+          console.log("Latest data updated:", doc.data());
+          // Get current user data
+          getDoc(userRef).then((userDoc) => {
+            if (userDoc.exists()) {
+              const userData = userDoc.data();
+              // Merge latestData with user data
+              callback({
+                ...userData,
+                latestData: doc.data()
+              });
+            }
+          });
+        }
+      }, (error) => {
+        console.error("Error in latestData listener:", error);
+        setError("Failed to listen for latest data updates");
+      });
+
+      // Return cleanup function that unsubscribes from both listeners
+      return () => {
+        console.log("Cleaning up real-time listeners");
+        userUnsubscribe();
+        latestDataUnsubscribe();
+      };
     } catch (error) {
-      console.error("Error setting up user data listener:", error)
-      setError("Failed to set up real-time updates")
-      throw error
+      console.error("Error setting up user data listener:", error);
+      setError("Failed to set up real-time updates");
+      throw error;
     }
   }
 
@@ -133,62 +158,54 @@ export function AuthProvider({ children }) {
   // Update user data in Firestore
   async function updateUserData(uid, data) {
     try {
-      const docRef = doc(db, "users", uid)
+      const userRef = doc(db, "users", uid)
+      const latestDataRef = doc(db, "users", uid, "latestData", "latest")
+      const historyRef = collection(db, "users", uid, "history")
       
       // Get current user data
-      const userDoc = await getDoc(docRef)
+      const userDoc = await getDoc(userRef)
       const currentData = userDoc.exists() ? userDoc.data() : {}
       
-      // If height is being updated, update it at the top level and recalculate BMI
+      // If height is being updated, update it in userInfo
       if (data.height !== undefined) {
         const height = Number.parseFloat(data.height)
-        const weight = currentData.healthData?.weight || 0
-        let bmi = null
-
-        if (height > 0 && weight > 0) {
-          const heightInMeters = height / 100
-          bmi = Number.parseFloat((weight / (heightInMeters * heightInMeters)).toFixed(1))
-        }
-
-        await updateDoc(docRef, {
-          height: height,
-          bmi: bmi
+        await updateDoc(userRef, {
+          "userInfo.height": height
         })
         // Refresh user data after updating height
         await refreshUserData()
         return
       }
       
-      // Update the healthData field with proper structure
-      const updatedHealthData = {
-        ...currentData.healthData,
-        weight: data.weight || currentData.healthData?.weight || 0,
-        bpm: data.bpm || currentData.healthData?.bpm || 0,
-        spo2: data.spo2 || currentData.healthData?.spo2 || 0,
-        temperature: data.temperature || currentData.healthData?.temperature || 0,
-        bodyFat: data.bodyFat || currentData.healthData?.bodyFat || 0,
-        bodyWater: data.bodyWater || currentData.healthData?.bodyWater || 0,
-        skeletalMuscle: data.skeletalMuscle || currentData.healthData?.skeletalMuscle || 0,
+      // Prepare the latest data update
+      const latestData = {
+        weight: data.weight || 0,
+        heart_rate: data.bpm || 0,
+        spo2: data.spo2 || 0,
+        temperature: data.temperature || 0,
+        fsr1: data.fsr1 || 0,
+        fsr2: data.fsr2 || 0,
+        fsr3: data.fsr3 || 0,
+        fsr4: data.fsr4 || 0,
         timestamp: new Date().toISOString()
       }
 
-      // Recalculate BMI if weight is being updated and height exists
-      let bmi = currentData.bmi
-      if (data.weight !== undefined && currentData.height > 0) {
-        const heightInMeters = currentData.height / 100
-        bmi = Number.parseFloat((data.weight / (heightInMeters * heightInMeters)).toFixed(1))
+      // Check if this is the first data update
+      const latestDataDoc = await getDoc(latestDataRef)
+      const isFirstDataUpdate = !latestDataDoc.exists()
+
+      // Update latest data
+      await setDoc(latestDataRef, latestData)
+
+      // Add to history collection
+      await addDoc(historyRef, latestData)
+
+      // If this is the first data update, log it
+      if (isFirstDataUpdate) {
+        console.log("First data update from ESP32 - created latestData and history collections")
       }
 
-      await updateDoc(docRef, {
-        healthData: updatedHealthData,
-        bmi: bmi,
-        lastMeasurement: new Date().toISOString()
-      })
-
-      console.log("Updated user data in Firestore:", {
-        healthData: updatedHealthData,
-        bmi: bmi
-      })
+      console.log("Updated user data in Firestore:", latestData)
     } catch (error) {
       console.error("Error updating user data:", error)
       setError("Failed to update user data")
@@ -207,25 +224,14 @@ export function AuthProvider({ children }) {
         displayName: name
       })
 
-      // Create user document in Firestore with all necessary fields
-      await setDoc(doc(db, "users", user.uid), {
-        email: email,
-        name: name,
-        created: new Date().toISOString(),
-        height: 0,
-        FSR1: 0,
-        FSR2: 0,
-        FSR3: 0,
-        FSR4: 0,
-        healthData: {
-          weight: 0,
-          bpm: 0,
-          spo2: 0,
-          temperature: 0,
-          bodyFat: 0,
-          bodyWater: 0,
-          skeletalMuscle: 0,
-          timestamp: null
+      // Create user document in Firestore with only userInfo
+      const userRef = doc(db, "users", user.uid)
+      await setDoc(userRef, {
+        userInfo: {
+          username: name,
+          email: email,
+          password: password,
+          height: 0
         }
       })
 
@@ -256,26 +262,15 @@ export function AuthProvider({ children }) {
       // Check if user document exists
       const userDoc = await getDoc(doc(db, "users", user.uid))
       
-      // If user document doesn't exist, create it with all necessary fields
+      // If user document doesn't exist, create it with only userInfo
       if (!userDoc.exists()) {
-        await setDoc(doc(db, "users", user.uid), {
-          email: user.email,
-          name: user.displayName || user.email.split('@')[0], // Use email username if no display name
-          created: new Date().toISOString(),
-          height: 0,
-          FSR1: 0,
-          FSR2: 0,
-          FSR3: 0,
-          FSR4: 0,
-          healthData: {
-            weight: 0,
-            bpm: 0,
-            spo2: 0,
-            temperature: 0,
-            bodyFat: 0,
-            bodyWater: 0,
-            skeletalMuscle: 0,
-            timestamp: null
+        const userRef = doc(db, "users", user.uid)
+        await setDoc(userRef, {
+          userInfo: {
+            username: user.displayName || user.email.split('@')[0],
+            email: user.email,
+            password: "google_auth",
+            height: 0
           }
         })
       }
