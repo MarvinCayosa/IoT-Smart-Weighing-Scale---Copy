@@ -64,6 +64,10 @@ const History = () => {
         const q = query(historyRef, orderBy("timestamp", "desc"))
         const snapshot = await getDocs(q)
 
+        console.log("Snapshot exists:", snapshot.exists)
+        console.log("Snapshot empty:", snapshot.empty)
+        console.log("Number of documents:", snapshot.docs.length)
+
         if (snapshot.empty) {
           console.log("No health data found in history collection")
           setHealthData([])
@@ -73,6 +77,7 @@ const History = () => {
 
         const data = snapshot.docs.map(doc => {
           const docData = doc.data()
+          console.log("Document data:", docData)
           return {
             ...docData,
             timestamp: docData.timestamp,
@@ -108,69 +113,24 @@ const History = () => {
         break
 
       case "week":
-        // Filter last 7 days and group by day
+        // Filter last 7 days
         const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
         filteredData = healthData.filter(entry => new Date(entry.timestamp) >= weekAgo)
-        
-        // Group by day and calculate averages
-        const dailyData = {}
-        filteredData.forEach(entry => {
-          const date = new Date(entry.timestamp)
-          const dayKey = date.toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric"
-          })
-          
-          if (!dailyData[dayKey]) {
-            dailyData[dayKey] = {
-              values: [],
-              timestamp: entry.timestamp
-            }
-          }
-          dailyData[dayKey].values.push(entry[activeTab] || 0)
-        })
-
-        // Convert to array of daily averages
-        filteredData = Object.entries(dailyData).map(([day, data]) => ({
-          timestamp: data.timestamp,
-          [activeTab]: data.values.reduce((a, b) => a + b, 0) / data.values.length
-        }))
         break
 
       case "month":
-        // Filter selected month and group by week
+        // Filter selected month
         const monthStart = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1)
         const monthEnd = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0)
         filteredData = healthData.filter(entry => {
           const date = new Date(entry.timestamp)
           return date >= monthStart && date <= monthEnd
         })
-
-        // Group by week and calculate averages
-        const weeklyData = {}
-        filteredData.forEach(entry => {
-          const date = new Date(entry.timestamp)
-          const weekNumber = Math.floor((date - monthStart) / (7 * 24 * 60 * 60 * 1000))
-          const weekKey = `Week ${weekNumber + 1}`
-          
-          if (!weeklyData[weekKey]) {
-            weeklyData[weekKey] = {
-              values: [],
-              timestamp: entry.timestamp
-            }
-          }
-          weeklyData[weekKey].values.push(entry[activeTab] || 0)
-        })
-
-        // Convert to array of weekly averages
-        filteredData = Object.entries(weeklyData).map(([week, data]) => ({
-          timestamp: data.timestamp,
-          [activeTab]: data.values.reduce((a, b) => a + b, 0) / data.values.length
-        }))
         break
     }
 
-    return filteredData
+    // Sort data by timestamp in ascending order for proper chart display
+    return filteredData.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
   }
 
   const getChartData = (key) => {
@@ -179,10 +139,6 @@ const History = () => {
     return {
       labels: filteredData.map((entry) => {
         const date = new Date(entry.timestamp)
-        if (timeFilter === "month") {
-          const weekNumber = Math.floor((date - new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1)) / (7 * 24 * 60 * 60 * 1000)) + 1
-          return `Week ${weekNumber}`
-        }
         return date.toLocaleDateString("en-US", {
           month: "short",
           day: "numeric",
@@ -236,7 +192,7 @@ const History = () => {
           pointStyle: "circle",
           boxWidth: 8,
           boxHeight: 8,
-          margin: activeTab === "weight" ? 20 : 0 // Add extra margin for weight label
+          margin: activeTab === "weight" ? 20 : 0
         },
       },
       tooltip: {
@@ -385,8 +341,7 @@ const History = () => {
 
   const getSummary = (key) => {
     if (!healthData.length) {
-      console.log("No health data available for summary")
-      return { avg: "-", max: "-", min: "-", change: "-" }
+      return { avg: "--", max: "--", min: "--", change: "--" }
     }
     
     // Filter data based on timeFilter
@@ -403,31 +358,37 @@ const History = () => {
         startDate.setDate(now.getDate() - 30)
         break
       default:
-        // No date filter for "all" time
         startDate = null
     }
-
-    console.log("Calculating summary for:", key)
-    console.log("Start date for summary filter:", startDate)
 
     const filteredData = startDate 
       ? healthData.filter(entry => {
           const entryDate = new Date(entry.timestamp)
-          const isInRange = entryDate >= startDate
-          console.log("Entry date:", entryDate, "Is in range:", isInRange)
-          return isInRange
+          return entryDate >= startDate
         })
       : healthData
 
-    console.log("Filtered data for summary:", filteredData)
+    // If no data in the filtered period, return placeholders
+    if (filteredData.length === 0) {
+      return { avg: "--", max: "--", min: "--", change: "--" }
+    }
 
-    const values = filteredData.map((entry) => entry[key] || 0)
+    const values = filteredData.map((entry) => entry[key] || 0).filter(val => val !== 0)
+    
+    // If no valid values after filtering zeros, return placeholders
+    if (values.length === 0) {
+      return { avg: "--", max: "--", min: "--", change: "--" }
+    }
+
     const avg = (values.reduce((a, b) => a + b, 0) / values.length).toFixed(1)
     const max = Math.max(...values).toFixed(1)
     const min = Math.min(...values).toFixed(1)
-    const change = (values[0] - values[values.length - 1]).toFixed(1)
-
-    console.log("Summary calculations:", { avg, max, min, change })
+    
+    // Calculate change only if there are at least 2 data points
+    let change = "--"
+    if (values.length >= 2) {
+      change = (values[0] - values[values.length - 1]).toFixed(1)
+    }
 
     return { avg, max, min, change }
   }
